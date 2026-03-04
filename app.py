@@ -3,13 +3,13 @@ import yfinance as yf
 import pandas as pd
 import requests
 import datetime
-import os
 import time
+import json
+import gspread
+from google.oauth2.service_account import Credentials
 
-# --- 1. 系統設定與資料儲存 ---
+# --- 1. 系統設定與 Google Sheets 連線 ---
 st.set_page_config(page_title="金融股動態決策系統", layout="wide")
-PORTFOLIO_FILE = "my_portfolio.csv"
-HISTORY_FILE = "trade_history.csv"
 
 stock_list = {
     "2880.TW": "華南金", "2886.TW": "兆豐金", "2892.TW": "第一金",
@@ -17,42 +17,71 @@ stock_list = {
     "2890.TW": "永豐金", "2885.TW": "元大金", "2883.TW": "凱基金"
 }
 
-# --- ETF 基礎資料 ---
 etf_base_data = [
-    {"代號名稱": "0056 元大高股息", "symbol": "0056.TW", "基準股利": "3.23 元 (3年平均)", "合理價_6": 53.8,
-     "便宜價_8": 40.4, "股災價_10": 32.3, "預設價格": 37.75},
-    {"代號名稱": "00713 元大台灣高息低波", "symbol": "00713.TW", "基準股利": "4.13 元 (3年平均)", "合理價_6": 68.8,
-     "便宜價_8": 51.6, "股災價_10": 41.3, "預設價格": 51.95},
-    {"代號名稱": "00919 群益台灣精選高息", "symbol": "00919.TW", "基準股利": "2.44 元 (3年平均)", "合理價_6": 40.7,
-     "便宜價_8": 30.5, "股災價_10": 24.4, "預設價格": 23.49},
-    {"代號名稱": "00878 國泰永續高股息", "symbol": "00878.TW", "基準股利": "1.67 元 (3年平均)", "合理價_6": 27.8,
-     "便宜價_8": 20.9, "股災價_10": 16.7, "預設價格": 22.07},
-    {"代號名稱": "00934 中信成長高股息", "symbol": "00934.TW", "基準股利": "1.68 元 (年化推估)", "合理價_6": 28.0,
-     "便宜價_8": 21.0, "股災價_10": 16.8, "預設價格": 21.11},
-    {"代號名稱": "00929 復華台灣科技優息", "symbol": "00929.TW", "基準股利": "1.32 元 (年化推估)", "合理價_6": 22.0,
-     "便宜價_8": 16.5, "股災價_10": 13.2, "預設價格": 18.69},
-    {"代號名稱": "00940 元大台灣價值高息", "symbol": "00940.TW", "基準股利": "0.48 元 (年化推估)", "合理價_6": 8.0,
-     "便宜價_8": 6.0, "股災價_10": 4.8, "預設價格": 9.45},
+    {"代號名稱": "0056 元大高股息", "symbol": "0056.TW", "基準股利": "3.23 元 (3年平均)", "合理價_6": 53.8, "便宜價_8": 40.4, "股災價_10": 32.3, "預設價格": 37.75},
+    {"代號名稱": "00713 元大台灣高息低波", "symbol": "00713.TW", "基準股利": "4.13 元 (3年平均)", "合理價_6": 68.8, "便宜價_8": 51.6, "股災價_10": 41.3, "預設價格": 51.95},
+    {"代號名稱": "00919 群益台灣精選高息", "symbol": "00919.TW", "基準股利": "2.44 元 (3年平均)", "合理價_6": 40.7, "便宜價_8": 30.5, "股災價_10": 24.4, "預設價格": 23.49},
+    {"代號名稱": "00878 國泰永續高股息", "symbol": "00878.TW", "基準股利": "1.67 元 (3年平均)", "合理價_6": 27.8, "便宜價_8": 20.9, "股災價_10": 16.7, "預設價格": 22.07},
+    {"代號名稱": "00934 中信成長高股息", "symbol": "00934.TW", "基準股利": "1.68 元 (年化推估)", "合理價_6": 28.0, "便宜價_8": 21.0, "股災價_10": 16.8, "預設價格": 21.11},
+    {"代號名稱": "00929 復華台灣科技優息", "symbol": "00929.TW", "基準股利": "1.32 元 (年化推估)", "合理價_6": 22.0, "便宜價_8": 16.5, "股災價_10": 13.2, "預設價格": 18.69},
+    {"代號名稱": "00940 元大台灣價值高息", "symbol": "00940.TW", "基準股利": "0.48 元 (年化推估)", "合理價_6": 8.0, "便宜價_8": 6.0, "股災價_10": 4.8, "預設價格": 9.45},
 ]
 
-if os.path.exists(PORTFOLIO_FILE):
-    df_portfolio = pd.read_csv(PORTFOLIO_FILE)
+# 🟢 初始化 Google Sheets 連線
+@st.cache_resource
+def init_gsheets():
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds_info = json.loads(st.secrets["gcp_service_account"])
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet_url = st.secrets["sheet_url"]
+        return client.open_by_url(sheet_url)
+    except Exception as e:
+        st.error(f"⚠️ Google Sheets 連線失敗，請檢查 Secrets 設定。錯誤訊息: {e}")
+        return None
+
+sh = init_gsheets()
+
+if sh:
+    try:
+        ws_portfolio = sh.worksheet("Portfolio")
+        ws_history = sh.worksheet("History")
+    except:
+        st.error("⚠️ 找不到 'Portfolio' 或 'History' 分頁，請確保您在試算表中有建立這兩個工作表！")
+        st.stop()
+
+    # 從雲端讀取庫存
+    portfolio_records = ws_portfolio.get_all_records()
+    df_portfolio = pd.DataFrame(portfolio_records)
+    if df_portfolio.empty:
+        df_portfolio = pd.DataFrame(columns=["股票代號", "買進價格", "持有張數"])
+
+    # 從雲端讀取歷史
+    history_records = ws_history.get_all_records()
+    df_history = pd.DataFrame(history_records)
+    if df_history.empty:
+        df_history = pd.DataFrame(columns=["股票代號", "買進價格", "賣出價格", "賣出張數"])
 else:
-    df_portfolio = pd.DataFrame(columns=["股票代號", "買進價格", "持有張數"])
+    st.stop()
 
-if os.path.exists(HISTORY_FILE):
-    df_history = pd.read_csv(HISTORY_FILE)
-else:
-    df_history = pd.DataFrame(columns=["股票代號", "買進價格", "賣出價格", "賣出張數"])
+# 🟢 寫入雲端的函式
+def save_df_to_ws(df, ws):
+    ws.clear()
+    if not df.empty:
+        ws.update(values=[df.columns.values.tolist()] + df.values.tolist(), range_name='A1')
+    else:
+        ws.update(values=[df.columns.values.tolist()], range_name='A1')
 
 
-# --- 🟢 破解 yfinance 延遲的終極抓價函式 ---
+# --- 2. 自動化爬蟲引擎 ---
 def get_real_time_price_from_yahoo(symbol):
-    """直接呼叫 Yahoo 底層 API，獲取最即時報價"""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=5)
         data = response.json()
         price = data['chart']['result'][0]['meta']['regularMarketPrice']
@@ -60,13 +89,11 @@ def get_real_time_price_from_yahoo(symbol):
     except:
         return None
 
-
-# --- 2. 自動化爬蟲引擎 ---
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=30)  
 def fetch_stock_intelligence(symbol):
     stock_id = symbol.replace('.TW', '')
     stock = yf.Ticker(symbol)
-
+    
     hist = stock.history(period="1y")
     if hist.empty: return None
 
@@ -94,10 +121,8 @@ def fetch_stock_intelligence(symbol):
         if data:
             data = sorted(data, key=lambda x: x['date'])
             latest_dividend = data[-1]
-            cash_keys = ['CashEarningsDistribution', 'CashStatutoryReserveDistribution',
-                         'CapitalReserveDistributedToCashDividend', 'CashDividend', 'TotalCash']
-            stock_keys = ['StockEarningsDistribution', 'StockStatutoryReserveDistribution',
-                          'CapitalReserveDistributedToStockDividend', 'StockDividend', 'TotalStock']
+            cash_keys = ['CashEarningsDistribution', 'CashStatutoryReserveDistribution', 'CashDividend', 'TotalCash']
+            stock_keys = ['StockEarningsDistribution', 'StockStatutoryReserveDistribution', 'StockDividend', 'TotalStock']
             cash_div = sum(float(latest_dividend.get(k) or 0.0) for k in cash_keys if k in latest_dividend)
             stock_div = sum(float(latest_dividend.get(k) or 0.0) for k in stock_keys if k in latest_dividend)
     except Exception as e:
@@ -112,7 +137,6 @@ def fetch_stock_intelligence(symbol):
         "stock_div": round(stock_div, 2)
     }
 
-
 @st.cache_data(ttl=30)
 def fetch_live_price(symbol, default_price):
     live_price = get_real_time_price_from_yahoo(symbol)
@@ -125,7 +149,7 @@ def fetch_live_price(symbol, default_price):
 
 
 # --- 3. 側邊欄：輸入區 ---
-st.sidebar.header("⚙️ 庫存與交易紀錄管理")
+st.sidebar.header("⚙️ 雲端庫存與交易紀錄")
 action_type = st.sidebar.radio("請選擇操作：", ["➕ 更新持有庫存", "💰 紀錄已賣出標的"])
 st.sidebar.markdown("---")
 input_symbol = st.sidebar.selectbox("選擇標的", list(stock_list.keys()), format_func=lambda x: f"{x} {stock_list[x]}")
@@ -133,25 +157,25 @@ input_symbol = st.sidebar.selectbox("選擇標的", list(stock_list.keys()), for
 if action_type == "➕ 更新持有庫存":
     input_buy_price = st.sidebar.number_input("平均買進價格 (元)", min_value=0.0, value=20.0, step=0.05)
     input_shares = st.sidebar.number_input("目前持有張數", min_value=1, value=1, step=1)
-    if st.sidebar.button("確認存入持股庫存"):
+    if st.sidebar.button("確認存入雲端庫存"):
         if input_symbol in df_portfolio["股票代號"].values:
-            df_portfolio.loc[df_portfolio["股票代號"] == input_symbol, ["買進價格", "持有張數"]] = [input_buy_price,
-                                                                                                    input_shares]
+            df_portfolio.loc[df_portfolio["股票代號"] == input_symbol, ["買進價格", "持有張數"]] = [input_buy_price, input_shares]
         else:
             new_row = pd.DataFrame([{"股票代號": input_symbol, "買進價格": input_buy_price, "持有張數": input_shares}])
             df_portfolio = pd.concat([df_portfolio, new_row], ignore_index=True)
-        df_portfolio.to_csv(PORTFOLIO_FILE, index=False)
-        st.sidebar.success(f"{stock_list[input_symbol]} 持股已更新！")
+        # 同步寫入 Google Sheets
+        save_df_to_ws(df_portfolio, ws_portfolio)
+        st.sidebar.success(f"☁️ {stock_list[input_symbol]} 持股已同步至雲端！")
 
 elif action_type == "💰 紀錄已賣出標的":
     input_buy_price = st.sidebar.number_input("當時買進價格 (元)", min_value=0.0, value=20.0, step=0.05)
     input_sell_price = st.sidebar.number_input("實際賣出價格 (元)", min_value=0.0, value=25.0, step=0.05)
     input_sell_shares = st.sidebar.number_input("賣出張數", min_value=1, value=1, step=1)
     if st.sidebar.button("確認寫入歷史紀錄"):
-        new_row = pd.DataFrame([{"股票代號": input_symbol, "買進價格": input_buy_price, "賣出價格": input_sell_price,
-                                 "賣出張數": input_sell_shares}])
+        new_row = pd.DataFrame([{"股票代號": input_symbol, "買進價格": input_buy_price, "賣出價格": input_sell_price, "賣出張數": input_sell_shares}])
         df_history = pd.concat([df_history, new_row], ignore_index=True)
-        df_history.to_csv(HISTORY_FILE, index=False)
+        save_df_to_ws(df_history, ws_history)
+        
         if input_symbol in df_portfolio["股票代號"].values:
             current_shares = df_portfolio.loc[df_portfolio["股票代號"] == input_symbol, "持有張數"].values[0]
             new_shares = current_shares - input_sell_shares
@@ -159,8 +183,8 @@ elif action_type == "💰 紀錄已賣出標的":
                 df_portfolio.loc[df_portfolio["股票代號"] == input_symbol, "持有張數"] = new_shares
             else:
                 df_portfolio = df_portfolio[df_portfolio["股票代號"] != input_symbol]
-            df_portfolio.to_csv(PORTFOLIO_FILE, index=False)
-        st.sidebar.success(f"已記錄獲利！")
+            save_df_to_ws(df_portfolio, ws_portfolio)
+        st.sidebar.success(f"☁️ 已記錄獲利並同步雲端！")
 
 # --- 4. 主畫面：三頁面架構 ---
 st.title("📈 金融股 API 雙引擎決策系統")
@@ -242,7 +266,7 @@ with tab1:
         st.dataframe(pd.DataFrame(overview_data), use_container_width=True, hide_index=True)
 
 # ==========================================
-# 標籤頁 2：賣出決策 (🟢 已更新為緊湊型卡片)
+# 標籤頁 2：賣出決策
 # ==========================================
 with tab2:
     if not df_portfolio.empty:
@@ -266,7 +290,6 @@ with tab2:
             is_profit_reached = profit_pct >= 8.0
             is_price_expensive = current_price >= expensive_price_4pct and total_div_value > 0
 
-            # 狀態判定
             if is_profit_reached and is_price_expensive:
                 card_color = "#ffcccc"
                 signal_text = f"🚨 雙重賣訊達標！獲利達 {profit_pct}% 且進入昂貴區，強烈建議獲利了結 💰"
@@ -280,10 +303,8 @@ with tab2:
                 card_color = "#f9f9f9"
                 signal_text = "🛡️ 安全區間：持續抱緊，等待雙指標達標。"
 
-            # 損益顏色判定 (台股紅綠邏輯)
             profit_color = "#d32f2f" if profit_pct > 0 else ("#388e3c" if profit_pct < 0 else "#333333")
-
-            # 使用 Flexbox 進行緊湊排版
+            
             st.markdown(f"""
             <div style='background-color: {card_color}; padding: 12px 18px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #ccc; color: #222;'>
                 <div style='font-size: 16px; font-weight: 700; margin-bottom: 8px;'>{stock_name} ({symbol.replace('.TW', '')}) | {signal_text}</div>
@@ -306,13 +327,13 @@ with tab2:
 with tab3:
     st.markdown("### 🎯 台灣高股息 ETF 估價位階監控表")
     st.markdown("基於圖片設定之殖利率區間：6% (合理)、8% (便宜)、10% (股災)")
-
+    
     etf_display_data = []
-
+    
     etf_prog = st.progress(0)
     for i, etf in enumerate(etf_base_data):
         live_price = fetch_live_price(etf["symbol"], etf["預設價格"])
-
+        
         status = ""
         if live_price <= etf["股災價_10"]:
             status = "🔥 股災價區間 (<10%)"
@@ -333,6 +354,6 @@ with tab3:
             "位階判定": status
         })
         etf_prog.progress((i + 1) / len(etf_base_data))
-
+    
     etf_prog.empty()
     st.dataframe(pd.DataFrame(etf_display_data), use_container_width=True, hide_index=True)
