@@ -188,7 +188,9 @@ elif action_type == "💰 紀錄已賣出標的":
 
 # --- 4. 主畫面：三頁面架構 ---
 st.title("📈 金融股 API 雙引擎決策系統")
-current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# 🟢 強制轉換成台灣時間 (UTC+8)
+tw_tz = datetime.timezone(datetime.timedelta(hours=8))
+current_time = datetime.datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
 st.markdown(f"**⏱️ 資料最後更新時間：** `{current_time}`")
 
 tab1, tab2, tab3 = st.tabs(["⚡ 買進決策 (大盤掃描 & 雙指標接回)", "📊 賣出決策 (庫存與停利)", "🎯 高股息 ETF 監控"])
@@ -357,3 +359,4 @@ with tab3:
     
     etf_prog.empty()
     st.dataframe(pd.DataFrame(etf_display_data), use_container_width=True, hide_index=True)
+
