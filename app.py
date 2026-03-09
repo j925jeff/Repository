@@ -11,11 +11,21 @@ from google.oauth2.service_account import Credentials
 # --- 1. 系統設定與 Google Sheets 連線 ---
 st.set_page_config(page_title="金融股動態決策系統", layout="wide")
 
+# 原本的金融股清單
 stock_list = {
     "2880.TW": "華南金", "2886.TW": "兆豐金", "2892.TW": "第一金",
     "5880.TW": "合庫金", "2834.TW": "臺企銀", "2887.TW": "台新新光金",
     "2890.TW": "永豐金", "2885.TW": "元大金", "2883.TW": "凱基金"
 }
+
+# 🟢 新增：將 ETF 加入清單
+etf_list = {
+    "0056.TW": "元大高股息", "00713.TW": "元大台灣高息低波", "00919.TW": "群益台灣精選高息",
+    "00878.TW": "國泰永續高股息", "00934.TW": "中信成長高股息", "00929.TW": "復華台灣科技優息",
+    "00940.TW": "元大台灣價值高息"
+}
+# 🟢 新增：合併金融股與 ETF，作為庫存與側邊欄的總選單
+all_targets = {**stock_list, **etf_list}
 
 etf_base_data = [
     {"代號名稱": "0056 元大高股息", "symbol": "0056.TW", "基準股利": "3.23 元 (3年平均)", "合理價_6": 53.8, "便宜價_8": 40.4, "股災價_10": 32.3, "預設價格": 37.75},
@@ -152,7 +162,9 @@ def fetch_live_price(symbol, default_price):
 st.sidebar.header("⚙️ 雲端庫存與交易紀錄")
 action_type = st.sidebar.radio("請選擇操作：", ["➕ 更新持有庫存", "💰 紀錄已賣出標的"])
 st.sidebar.markdown("---")
-input_symbol = st.sidebar.selectbox("選擇標的", list(stock_list.keys()), format_func=lambda x: f"{x} {stock_list[x]}")
+
+# 🟢 這裡修改成使用 all_targets，讓選單包含 ETF
+input_symbol = st.sidebar.selectbox("選擇標的", list(all_targets.keys()), format_func=lambda x: f"{x} {all_targets[x]}")
 
 if action_type == "➕ 更新持有庫存":
     input_buy_price = st.sidebar.number_input("平均買進價格 (元)", min_value=0.0, value=20.0, step=0.05)
@@ -165,7 +177,8 @@ if action_type == "➕ 更新持有庫存":
             df_portfolio = pd.concat([df_portfolio, new_row], ignore_index=True)
         # 同步寫入 Google Sheets
         save_df_to_ws(df_portfolio, ws_portfolio)
-        st.sidebar.success(f"☁️ {stock_list[input_symbol]} 持股已同步至雲端！")
+        # 🟢 這裡也修改成 all_targets
+        st.sidebar.success(f"☁️ {all_targets[input_symbol]} 持股已同步至雲端！")
 
 elif action_type == "💰 紀錄已賣出標的":
     input_buy_price = st.sidebar.number_input("當時買進價格 (元)", min_value=0.0, value=20.0, step=0.05)
@@ -196,7 +209,7 @@ st.markdown(f"**⏱️ 資料最後更新時間：** `{current_time}`")
 tab1, tab2, tab3 = st.tabs(["⚡ 買進決策 (大盤掃描 & 雙指標接回)", "📊 賣出決策 (庫存與停利)", "🎯 高股息 ETF 監控"])
 
 # ==========================================
-# 標籤頁 1：買進決策
+# 標籤頁 1：買進決策 (只掃描金融股)
 # ==========================================
 with tab1:
     st.markdown("### 🔍 每日尋找買點：結合基本面與【歷史折價5% + 20MA】雙指標")
@@ -276,7 +289,8 @@ with tab2:
             symbol = row["股票代號"]
             buy_price = row["買進價格"]
             shares = row["持有張數"]
-            stock_name = stock_list.get(symbol, symbol)
+            # 🟢 這裡修改成使用 all_targets，這樣 ETF 才能抓到名字
+            stock_name = all_targets.get(symbol, symbol)
 
             intel = fetch_stock_intelligence(symbol)
             if not intel: continue
@@ -359,4 +373,3 @@ with tab3:
     
     etf_prog.empty()
     st.dataframe(pd.DataFrame(etf_display_data), use_container_width=True, hide_index=True)
-
